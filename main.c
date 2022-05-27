@@ -308,11 +308,16 @@ int main(int argc, char *argv[]) {
                 goto USAGE;
             }
             errno = 0;
-            threads = strtol(argv[i + 1], NULL, 10);
-            if (errno) {
+            char *end;
+            long val = strtol(argv[i + 1], &end, 10);
+            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) ||
+                (errno != 0 && val == 0) ||
+                end == argv[i + 1] ||
+                val <= 0) {
                 printf("Invalid thread count number.\n");
                 goto USAGE; /* invalid integer */
             }
+            threads = val;
             break;
         }
     }
