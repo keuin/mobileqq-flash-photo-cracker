@@ -193,7 +193,6 @@ int thread_worker(thread_param *param) {
         assert(pad_length < ciphertext_length);
         if (pad_length < 0) {
             /* invalid pad, this key is incorrect, skip it */
-            fprintf(stderr, "Invalid pad.\n");
             continue;
         }
 
