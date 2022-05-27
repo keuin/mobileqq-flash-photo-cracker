@@ -11,9 +11,12 @@
 
 const char *hexchars = "0123456789ABCDEF";
 
+int pkcs7_check_pad(const char *buf, size_t n);
+
 typedef struct s_key_search_ctx {
-    /* first 8 bytes of the ciphertext in encrypted QQ flash image */
-    uint64_t ciphertext;
+    /* first 8 bytes and the last 8 bytes of the ciphertext
+     * in encrypted QQ flash image */
+    uint64_t ciphertext[2];
     /* if routine `yield_possible_key` returns true,
      * the possible 64-bit DES key will be stored here */
     uint64_t yield;
@@ -25,12 +28,13 @@ typedef struct s_key_search_ctx {
 /* constructor of type `key_search_ctx` */
 void new_key_search_ctx(
         key_search_ctx *ctx,
-        uint64_t ciphertext,
+        uint64_t ciphertext[2],
         uint32_t a
 ) {
     ctx->finished = false;
     ctx->next_possible_key = a;
-    ctx->ciphertext = ciphertext;
+    ctx->ciphertext[0] = ciphertext[0];
+    ctx->ciphertext[1] = ciphertext[1];
 }
 
 /* search key in range [a, b), returns false if
@@ -73,20 +77,33 @@ bool yield_possible_key(
             fprintf(stderr, "Err: setup: %s", error_to_string(err));
             return false;
         }
+        /* decrypt the first 8 bytes */
         if (des_ecb_decrypt(
-                (const unsigned char *) &(ctx->ciphertext),
+                (const unsigned char *) (&ctx->ciphertext[0]),
                 (unsigned char *) &plaintext,
                 (const symmetric_key *) &skey
         ) != CRYPT_OK)
             continue; // failed to decrypt
         /* validate JPEG header (first 3 bytes) of the plaintext */
-        if ((plaintext & 0xFFFFFFu) == 0xFFD8FFu) {
-            ctx->yield = *(uint64_t *) key;
-            /* if `next_possible_key` goes out of range,
-             * it means that we have searched all possible keys */
-            ctx->finished = ++ctx->next_possible_key >= b;
-            return true;
-        }
+        if ((plaintext & 0xFFFFFFu) != 0xFFD8FFu)
+            continue; /* invalid JPEG header */
+
+        /* decrypt the last 8 bytes */
+        if (des_ecb_decrypt(
+                (const unsigned char *) (&ctx->ciphertext[1]),
+                (unsigned char *) &plaintext,
+                (const symmetric_key *) &skey
+        ) != CRYPT_OK)
+            continue; // failed to decrypt
+        if (pkcs7_check_pad((const char *) &plaintext, 8) < 0)
+            continue; /* invalid pkcs7 padding */
+
+        /* all checks passed, this may be a valid key, yield it */
+        ctx->yield = *(uint64_t *) key;
+        /* if `next_possible_key` goes out of range,
+         * it means that we have searched all possible keys */
+        ctx->finished = ++ctx->next_possible_key >= b;
+        return true;
         /* if b == 0 and k == 0, finish searching */
     } while ((k = ++ctx->next_possible_key) || b != 0);
     ctx->finished = true;
@@ -131,7 +148,11 @@ int thread_worker(thread_param *param) {
     key_search_ctx ctx;
     const uint32_t b = param->b; /* search end */
     uint32_t ciphertext_length = ciphertext_len;
-    new_key_search_ctx(&ctx, *(uint64_t *) ciphertext, param->a);
+    uint64_t prefilter_ciphertext[2] = {
+            *(uint64_t *) ciphertext,
+            *((uint64_t *) (ciphertext + ciphertext_length) - 1)
+    };
+    new_key_search_ctx(&ctx, prefilter_ciphertext, param->a);
     char *plaintext = malloc(ciphertext_length);
     if (plaintext == NULL) {
         perror("malloc");
