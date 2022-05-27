@@ -326,7 +326,7 @@ int main(int argc, char *argv[]) {
                 printf("Invalid thread count number.\n");
                 goto USAGE; /* invalid integer */
             }
-            threads = val;
+            threads = (int)val;
             break;
         }
     }
