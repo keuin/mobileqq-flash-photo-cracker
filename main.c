@@ -393,7 +393,9 @@ int main(int argc, char *argv[]) {
         fclose(fout);
         printf("Flash photo has been saved in: %s\n",
                plaintext_save_path);
-    } else {
+    }
+
+    if (crack_result.plaintext == NULL) {
         printf("[-] KEY WAS NOT FOUND.\n");
     }
 
