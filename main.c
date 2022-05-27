@@ -253,7 +253,8 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    const char *plaintext_save_path = (argc >= 3) ? (argv[2]) : NULL;
+    const char *plaintext_save_path =
+            (argc >= 3 && strcmp(argv[2], "-j") != 0) ? (argv[2]) : NULL;
     const char *ciphertext_file_path = argv[1];
 
     /* open file */
