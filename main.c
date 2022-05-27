@@ -117,6 +117,10 @@ bool yield_possible_key(
  * the data is not padded with valid pkcs7 */
 int pkcs7_check_pad(const char *buf, size_t n) {
     if (!n) return -1;
+    if (n == 1) {
+        /* if total length is 1, the only valid string is 0x1 */
+        return (buf[0] == 1u) ? 1 : -1;
+    }
     --n;
     unsigned char pad = buf[n--];
     if (!pad) return -1;
