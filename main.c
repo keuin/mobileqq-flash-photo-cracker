@@ -210,7 +210,7 @@ int thread_worker(thread_param *param) {
                  md5_out[2] & 0xFFu, md5_out[3] & 0xFFu);
         if (!memcmp(md5_hex, (const char *) (&ctx.yield), 8)) {
             atomic_store(&key_found, true);
-            printf("[+] FOUND KEY: %zu\n", ctx.yield);
+            printf("[+] FOUND KEY: %s\n", md5_hex);
             crack_result.plaintext = plaintext;
             crack_result.len = unpadded_length;
             return 0;
