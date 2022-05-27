@@ -176,8 +176,6 @@ int thread_worker(thread_param *param) {
             continue;
         }
 
-        // TODO accelerate by checking the padding at first
-
         uint_fast32_t blk_cnt = ciphertext_length >> 3;
         for (uint_fast32_t blk = 0; blk < blk_cnt; ++blk) {
             des_ecb_decrypt(
