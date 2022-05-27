@@ -9,7 +9,9 @@
 
 #include <tomcrypt.h>
 
-const char *hexchars = "0123456789ABCDEF";
+/* because DES discards all LSBs of every byte,
+ * the hex alphabet can be reduced by masking out LSB from all characters */
+const char *hexchars = "02468@BDF";
 
 int pkcs7_check_pad(const char *buf, size_t n);
 
@@ -52,8 +54,8 @@ bool yield_possible_key(
 //    const char[] hexchars = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
 //                             0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46};
 #define FILL_KEY(buf, key, i) \
-        ((buf)[7-(i)] = hexchars[((key) >> (4*(i))) & 0xFu]) \
-        // buf: char[8], key: uint64_t, i:uint = 0, 1, 2, ..., 7
+        do { ((buf)[7-(i)] = hexchars[(key)%9u]); (key) /= 9u; } while(0)
+    // buf: char[8], key: uint64_t (high bits unused), i:uint = 0, 1, 2, ..., 7
     uint32_t k = ctx->next_possible_key;
     uint64_t plaintext;
     char key[8];
@@ -64,15 +66,18 @@ bool yield_possible_key(
             ctx->finished = true;
             return false;
         }
-        // convert key uint32 to char[]
-        FILL_KEY(key, k, 0);
-        FILL_KEY(key, k, 1);
-        FILL_KEY(key, k, 2);
-        FILL_KEY(key, k, 3);
-        FILL_KEY(key, k, 4);
-        FILL_KEY(key, k, 5);
-        FILL_KEY(key, k, 6);
-        FILL_KEY(key, k, 7);
+        /* convert key uint32 to char[],
+         * here FILL_KEY will modify key,
+         * so we use a temp variable */
+        uint32_t k_tmp = k;
+        FILL_KEY(key, k_tmp, 0);
+        FILL_KEY(key, k_tmp, 1);
+        FILL_KEY(key, k_tmp, 2);
+        FILL_KEY(key, k_tmp, 3);
+        FILL_KEY(key, k_tmp, 4);
+        FILL_KEY(key, k_tmp, 5);
+        FILL_KEY(key, k_tmp, 6);
+        FILL_KEY(key, k_tmp, 7);
         // decrypt file header with this key
         int err;
         if ((err = des_setup((const unsigned char *) key, 8, 0, &skey)) !=
@@ -211,7 +216,10 @@ int thread_worker(thread_param *param) {
         snprintf(md5_hex, 8 + 1, "%02X%02X%02X%02X",
                  md5_out[0] & 0xFFu, md5_out[1] & 0xFFu,
                  md5_out[2] & 0xFFu, md5_out[3] & 0xFFu);
-        if (!memcmp(md5_hex, (const char *) (&ctx.yield), 8)) {
+        /* since we have discarded the LSBs of every byte of the key,
+         * we always yield keys whose bytes all have their LSB equals to 0.
+         * So we mask out the LSBs from md5_hex before comparing */
+        if (ctx.yield == ((*(uint64_t *) md5_hex) & 0xFEFEFEFEFEFEFEFEull)) {
             atomic_store(&key_found, true);
             printf("[+] FOUND KEY: %s\n", md5_hex);
             crack_result.plaintext = plaintext;
@@ -340,14 +348,18 @@ int main(int argc, char *argv[]) {
     }
 
     /* assign search ranges to workers */
-    uint32_t range_size = 0xFFFFFFFFu / threads;
+    /* powl(9,8) == 43046721,
+     * the key is about 25.3594 bits,
+     * a very small space for brute-force searching */
+#define KEYSPACE_SIZE 43046721u
+    uint32_t range_size = KEYSPACE_SIZE / threads;
     for (int i = 0; i < threads; ++i) {
         thread_params[i].a = range_size * i;
         thread_params[i].b = range_size * i + range_size;
         thread_params[i].worker_id = i;
     }
     /* the last search range should warp */
-    thread_params[threads - 1].b = 0;
+    thread_params[threads - 1].b = KEYSPACE_SIZE;
 
     /* start workers */
     for (int i = 0; i < threads; ++i) {
@@ -380,6 +392,8 @@ int main(int argc, char *argv[]) {
         fclose(fout);
         printf("Flash photo has been saved in: %s\n",
                plaintext_save_path);
+    } else {
+        printf("[-] KEY WAS NOT FOUND.\n");
     }
 
     return 0;
