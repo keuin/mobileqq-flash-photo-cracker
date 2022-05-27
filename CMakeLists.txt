@@ -9,4 +9,4 @@ set(CMAKE_C_FLAGS_RELEASE "${common_compiler_args} -O3 -DNDEBUG")
 
 add_executable(fp_cracker main.c)
 
-target_link_libraries(fp_cracker libtomcrypt.a)
+target_link_libraries(fp_cracker libtomcrypt.a pthread)
