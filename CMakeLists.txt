@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0)
 project(mobileqq_fp_cracker C)
 
-set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD 11)
 
 set(common_compiler_args "-Wall -Werror -Wno-unused")
 set(CMAKE_CXX_FLAGS_DEBUG "${common_compiler_args} -g -ggdb -fsanitize=address -DDEBUG")
