@@ -10,6 +10,11 @@
 
 #include <tomcrypt.h>
 
+#define OPTPARSE_IMPLEMENTATION
+#define OPTPARSE_API static
+
+#include "optparse.h"
+
 /* because DES discards all LSBs of every byte,
  * the hex alphabet can be reduced by masking out LSB from all characters */
 const char *keychars = "02468@BDF";
@@ -258,7 +263,7 @@ int thread_worker(thread_param *param) {
     return 0;
 }
 
-void benchmark() {
+void run_benchmark() {
 #define TEST_CT_LENGTH 1024u
     const int end = 1000000;
     atomic_bool found = false;
@@ -298,35 +303,101 @@ void benchmark() {
     }
 }
 
+void print_help(const char *program_name) {
+    printf(
+            "Usage: %s <input_file> "
+            "[-o <output_file>] "
+            "[-j <threads>] "
+            "[--benchmark]\n"
+            "    -o --output <file>\tsave the decrypted photo into a file\n"
+            "    -j --jobs <threads>\thow many threads to use (default: 1)\n"
+            "    -b --benchmark\trun a benchmark to measure the speed\n"
+            "    -h --help\t\tprint this help menu and exit\n",
+            program_name
+    );
+}
+
 int main(int argc, char *argv[]) {
     crack_result.plaintext = NULL;
 
-    if (argc == 1) {
-        USAGE:
-        printf("Usage: %s <fp_file> "
-               "[<where_to_save_the_decrypted_file>] "
-               "[-j <threads>] "
-               "[--benchmark]\n"
-               "The decrypted image won't be saved if "
-               "save path is not specified.\n"
-               "threads: how many workers to run at the same time, "
-               "default: 1\n"
-               "--benchmark: if set, other parameters will be ignored\n",
-               argv[0]);
-        return 0;
-    }
+    /* arguments */
+    char *plaintext_save_path = NULL;
+    int threads = 1;
+    bool benchmark = false;
 
-    /* run benchmark and exit */
-    for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "--benchmark")) {
-            benchmark();
-            return 0;
+    /* parse commandline arguments */
+    const struct optparse_long options[] = {
+            {"output",    'o', OPTPARSE_REQUIRED},
+            {"jobs",      'j', OPTPARSE_REQUIRED},
+            {"benchmark", 'b', OPTPARSE_NONE},
+            {"help",      'h', OPTPARSE_NONE},
+            {0}
+    };
+
+    int opt;
+    struct optparse parse_state;
+    optparse_init(&parse_state, argv);
+    while ((opt = optparse_long(
+            &parse_state, options, NULL)) != -1) {
+        switch (opt) {
+            case 'o':
+                plaintext_save_path = parse_state.optarg;
+                break;
+            case 'j':
+                errno = 0;
+                char *end;
+                long val = strtol(parse_state.optarg, &end, 10);
+                if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) ||
+                    (errno != 0 && val == 0) ||
+                    end == parse_state.optarg ||
+                    val <= 0) {
+                    printf("Invalid parameter: thread count.\n");
+                    return 1;
+                }
+                threads = (int) val;
+                break;
+            case 'b':
+                benchmark = true;
+                break;
+            case 'h':
+            case '?':
+                if (opt == '?') {
+                    printf("Illegal parameter: %s\n",
+                           parse_state.errmsg);
+                }
+                print_help(argv[0]);
+                return 1;
+            default:
+                break;
         }
     }
 
-    const char *plaintext_save_path =
-            (argc >= 3 && strcmp(argv[2], "-j") != 0) ? (argv[2]) : NULL;
-    const char *ciphertext_file_path = argv[1];
+    /* parse remaining arguments */
+    char *ciphertext_file_path = NULL;
+    char *arg;
+    arg = optparse_arg(&parse_state);
+    if (arg != NULL) {
+        ciphertext_file_path = arg;
+    }
+
+    arg = optparse_arg(&parse_state);
+    if (arg != NULL) {
+        printf("Redundant argument: %s\n", arg);
+        return 1;
+    }
+    /* finish parsing arguments */
+
+    /* run benchmark and exit */
+    if (benchmark) {
+        run_benchmark();
+        return 0;
+    }
+
+    if (ciphertext_file_path == NULL) {
+        printf("Input file is not specified. "
+               "Use --help or -h to get help menu.\n");
+        return 1;
+    }
 
     /* open file */
     FILE *fp;
@@ -377,30 +448,6 @@ int main(int argc, char *argv[]) {
 
     ciphertext = ciphertext_buf;
     ciphertext_len = ciphertext_length;
-
-    int threads = 1;
-
-    /* read thread count from argv */
-    for (int i = 1; i < argc; ++i) {
-        if (!strcmp(argv[i], "-j")) {
-            if (i == argc - 1) {
-                printf("-j requires an integer parameter.\n");
-                goto USAGE;
-            }
-            errno = 0;
-            char *end;
-            long val = strtol(argv[i + 1], &end, 10);
-            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) ||
-                (errno != 0 && val == 0) ||
-                end == argv[i + 1] ||
-                val <= 0) {
-                printf("Invalid thread count number.\n");
-                goto USAGE; /* invalid integer */
-            }
-            threads = (int) val;
-            break;
-        }
-    }
 
     /* start searching */
     printf("Searching key (using %d workers)...\n", threads);
