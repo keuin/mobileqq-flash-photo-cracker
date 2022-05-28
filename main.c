@@ -6,6 +6,7 @@
 #include <threads.h>
 #include <stdatomic.h>
 #include <errno.h>
+#include <time.h>
 
 #include <tomcrypt.h>
 
@@ -13,6 +14,11 @@
  * the hex alphabet can be reduced by masking out LSB from all characters */
 const char *keychars = "02468@BDF";
 const char *hexchars = "0123456789ABCDEF";
+
+/* powl(9,8) == 43046721,
+ * the key is about 25.3594 bits,
+ * a very small space for brute-force searching */
+#define KEYSPACE_SIZE 43046721u
 
 /*
  * BIN2HEX: convert one byte from a byte array to a hex array
@@ -250,6 +256,46 @@ int thread_worker(thread_param *param) {
     return 0;
 }
 
+void benchmark() {
+#define TEST_CT_LENGTH 1024u
+    const int end = 1000000;
+    atomic_bool found = false;
+    key_search_ctx ctx;
+    char test_ciphertext[TEST_CT_LENGTH] = {0};
+    clock_t t_start, t_end;
+
+    new_key_search_ctx(
+            &ctx,
+            test_ciphertext,
+            TEST_CT_LENGTH,
+            0u
+    );
+    printf("Benchmarking...\n");
+
+
+    t_start = clock();
+    while (yield_possible_key(&ctx, end, &found)) {
+    }
+    t_end = clock();
+
+    const double key_per_sec =
+            1.0 * end / ((double) (t_end - t_start) / CLOCKS_PER_SEC);
+    printf(
+            "Finish.\n"
+            "Speed (single thread): %.3f key/sec\n",
+            key_per_sec
+    );
+
+    printf("Time to search the whole key space:\n");
+
+    const int threads[] = {1, 2, 4, 8, 16, 32, 0};
+    for (int i = 0; threads[i] > 0; ++i) {
+        printf("  %d thread: %.3f sec%s\n",
+               threads[i], (double) KEYSPACE_SIZE / key_per_sec / threads[i],
+               (threads[i] != 1) ? " (estimate)" : "");
+    }
+}
+
 int main(int argc, char *argv[]) {
     crack_result.plaintext = NULL;
 
@@ -257,13 +303,23 @@ int main(int argc, char *argv[]) {
         USAGE:
         printf("Usage: %s <fp_file> "
                "[<where_to_save_the_decrypted_file>] "
-               "[-j <threads>]\n"
+               "[-j <threads>] "
+               "[--benchmark]\n"
                "The decrypted image won't be saved if "
                "save path is not specified.\n"
                "threads: how many workers to run at the same time, "
-               "default: 1\n",
+               "default: 1\n"
+               "--benchmark: if set, other parameters will be ignored\n",
                argv[0]);
         return 0;
+    }
+
+    /* run benchmark and exit */
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "--benchmark")) {
+            benchmark();
+            return 0;
+        }
     }
 
     const char *plaintext_save_path =
@@ -339,7 +395,7 @@ int main(int argc, char *argv[]) {
                 printf("Invalid thread count number.\n");
                 goto USAGE; /* invalid integer */
             }
-            threads = (int)val;
+            threads = (int) val;
             break;
         }
     }
@@ -362,10 +418,6 @@ int main(int argc, char *argv[]) {
     }
 
     /* assign search ranges to workers */
-    /* powl(9,8) == 43046721,
-     * the key is about 25.3594 bits,
-     * a very small space for brute-force searching */
-#define KEYSPACE_SIZE 43046721u
     uint32_t range_size = KEYSPACE_SIZE / threads;
     for (int i = 0; i < threads; ++i) {
         thread_params[i].a = range_size * i;
