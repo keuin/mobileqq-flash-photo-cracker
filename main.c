@@ -292,7 +292,7 @@ void benchmark() {
 
     const int threads[] = {1, 2, 4, 8, 16, 32, 0};
     for (int i = 0; threads[i] > 0; ++i) {
-        printf("  %d thread: %.3f sec%s\n",
+        printf("  %3.d thread: %9.3f sec%s\n",
                threads[i], (double) KEYSPACE_SIZE / key_per_sec / threads[i],
                (threads[i] != 1) ? " (estimate)" : "");
     }
