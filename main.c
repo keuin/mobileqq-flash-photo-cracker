@@ -245,7 +245,9 @@ int thread_worker(thread_param *param) {
          * So we mask out the LSBs from md5_hex before comparing */
         if (ctx.yield == ((*(uint64_t *) md5_hex) & 0xFEFEFEFEFEFEFEFEull)) {
             atomic_store(&key_found, true);
-            printf("[+] FOUND KEY: %s\n", md5_hex);
+            printf("[+] FOUND KEY: ");
+            fwrite(md5_hex, 1, sizeof(md5_hex), stdout);
+            putchar('\n');
             crack_result.plaintext = plaintext;
             crack_result.len = unpadded_length;
             return 0;
