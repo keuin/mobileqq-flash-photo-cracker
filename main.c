@@ -11,7 +11,20 @@
 
 /* because DES discards all LSBs of every byte,
  * the hex alphabet can be reduced by masking out LSB from all characters */
-const char *hexchars = "02468@BDF";
+const char *keychars = "02468@BDF";
+const char *hexchars = "0123456789ABCDEF";
+
+/*
+ * BIN2HEX: convert one byte from a byte array to a hex array
+ * NOTE: this routine assumes little-endian 16-bit integer
+ * bin: pointer to binary data
+ * hex: pointer to output buffer
+ * i: which byte to write to hex
+*/
+#define BIN2HEX(bin, hex, i) \
+        (((uint16_t*)(hex))[i] = \
+        (hexchars[(((const char*)(bin))[i] >> 4u) & 0x0Fu]) | \
+        (hexchars[(((const char*)(bin))[i]) & 0x0Fu] << 8u))
 
 int pkcs7_check_pad(const char *buf, size_t n);
 
@@ -54,7 +67,7 @@ bool yield_possible_key(
 //    const char[] hexchars = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
 //                             0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46};
 #define FILL_KEY(buf, key, i) \
-        do { ((buf)[7-(i)] = hexchars[(key)%9u]); (key) /= 9u; } while(0)
+        do { ((buf)[7-(i)] = keychars[(key)%9u]); (key) /= 9u; } while(0)
     // buf: char[8], key: uint64_t (high bits unused), i:uint = 0, 1, 2, ..., 7
     uint32_t k = ctx->next_possible_key;
     uint64_t plaintext;
@@ -214,10 +227,11 @@ int thread_worker(thread_param *param) {
         /* compare md5_out[0~3] with 8-byte ASCII hex string ctx.yield */
         /* hex of first 4-byte of md5_out,
          * 1 more byte to hold the '\0' terminator */
-        char md5_hex[8 + 1];
-        snprintf(md5_hex, 8 + 1, "%02X%02X%02X%02X",
-                 md5_out[0] & 0xFFu, md5_out[1] & 0xFFu,
-                 md5_out[2] & 0xFFu, md5_out[3] & 0xFFu);
+        char md5_hex[8];
+        BIN2HEX(md5_out, md5_hex, 0);
+        BIN2HEX(md5_out, md5_hex, 1);
+        BIN2HEX(md5_out, md5_hex, 2);
+        BIN2HEX(md5_out, md5_hex, 3);
         /* since we have discarded the LSBs of every byte of the key,
          * we always yield keys whose bytes all have their LSB equals to 0.
          * So we mask out the LSBs from md5_hex before comparing */
