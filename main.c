@@ -60,8 +60,10 @@ bool yield_possible_key(
     uint64_t plaintext;
     char key[8];
     symmetric_key skey;
+    /* check `stop_signal` after every 256 round of loop */
+    uint8_t check_stop = 0;
     do {
-        if ((b != 0 && k >= b) || atomic_load(stop_signal)) {
+        if ((b != 0 && k >= b) || (!check_stop++ && atomic_load(stop_signal))) {
             // out of range, stop
             ctx->finished = true;
             return false;
