@@ -64,11 +64,15 @@ bool yield_possible_key(
 ) {
     if (ctx->finished) return false;
 
-//    const char[] hexchars = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
-//                             0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46};
+/*
+ * FILL_KEY: convert DES key from integer in search space to 8 bytes
+ * buf: char[8]
+ * key: uint64_t (high bits unused)
+ * i:uint = 0, 1, 2, ..., 7
+*/
 #define FILL_KEY(buf, key, i) \
         do { ((buf)[7-(i)] = keychars[(key)%9u]); (key) /= 9u; } while(0)
-    // buf: char[8], key: uint64_t (high bits unused), i:uint = 0, 1, 2, ..., 7
+
     uint32_t k = ctx->next_possible_key;
     uint64_t plaintext;
     char key[8];
@@ -77,7 +81,7 @@ bool yield_possible_key(
     uint8_t check_stop = 0;
     do {
         if ((b != 0 && k >= b) || (!check_stop++ && atomic_load(stop_signal))) {
-            // out of range, stop
+            /* out of range, finish searching */
             ctx->finished = true;
             return false;
         }
@@ -93,7 +97,7 @@ bool yield_possible_key(
         FILL_KEY(key, k_tmp, 5);
         FILL_KEY(key, k_tmp, 6);
         FILL_KEY(key, k_tmp, 7);
-        // decrypt file header with this key
+        /* decrypt file header with this key */
         int err;
         if ((err = des_setup((const unsigned char *) key, 8, 0, &skey)) !=
             CRYPT_OK) {
@@ -106,7 +110,7 @@ bool yield_possible_key(
                 (unsigned char *) &plaintext,
                 (const symmetric_key *) &skey
         ) != CRYPT_OK)
-            continue; // failed to decrypt
+            continue; /* failed to decrypt, skip this key */
         /* validate JPEG header (first 3 bytes) of the plaintext */
         if ((plaintext & 0xFFFFFFu) != 0xFFD8FFu)
             continue; /* invalid JPEG header */
@@ -117,7 +121,7 @@ bool yield_possible_key(
                 (unsigned char *) &plaintext,
                 (const symmetric_key *) &skey
         ) != CRYPT_OK)
-            continue; // failed to decrypt
+            continue; /* failed to decrypt, skip this key */
         if (pkcs7_check_pad((const char *) &plaintext, 8) < 0)
             continue; /* invalid pkcs7 padding */
 
@@ -144,7 +148,7 @@ int pkcs7_check_pad(const char *buf, size_t n) {
     --n;
     unsigned char pad = buf[n--];
     if (!pad) return -1;
-    if (n < pad) return -1; // buf is shorter than a valid pad
+    if (n < pad) return -1; /* buf is shorter than a valid pad */
     for (int i = pad; i > 1; --i) {
         if (buf[n--] != pad) return -1;
     }
@@ -181,14 +185,12 @@ int thread_worker(thread_param *param) {
         perror("malloc");
         return 1;
     }
-    /* FOR DEBUGGING ONLY */
-//    assert(*(uint64_t *) ciphertext == 8022485120222247589ull);
-//    ctx.next_possible_key = 0xA0979B6Du;
     while (yield_possible_key(&ctx, b, &key_found)) {
-        /* found a possible correct key */
-        /* validate it by calculating md5 hashsum of the plaintext */
-//        printf("[worker#%d] Possible key: %zu\n", param->worker_id, ctx.yield);
-//        fflush(stdout);
+        /* we have found a potential DES key */
+
+        /* QQ encrypts flash photo with the first 8 bytes
+         * of the uppercase md5 hex string of the photo,
+         * so we validate the key using this characteristic */
 
         /* decrypt the whole ciphertext */
         int err;
@@ -249,11 +251,6 @@ int thread_worker(thread_param *param) {
 }
 
 int main(int argc, char *argv[]) {
-//    uint64_t ciphertext = 8022485120222247589;
-//    unsigned char plaintext[8];
-//    const char *key = "A0979B6D";
-//    symmetric_key skey;
-
     crack_result.plaintext = NULL;
 
     if (argc == 1) {
