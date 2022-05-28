@@ -7,6 +7,8 @@
 #include <stdatomic.h>
 #include <errno.h>
 #include <time.h>
+#include <string.h>
+#include <sys/time.h>
 
 #include <tomcrypt.h>
 
@@ -263,44 +265,94 @@ int thread_worker(thread_param *param) {
     return 0;
 }
 
-void run_benchmark() {
+void run_benchmark(int threads) {
 #define TEST_CT_LENGTH 1024u
-    const int end = 1000000;
-    atomic_bool found = false;
-    key_search_ctx ctx;
-    char test_ciphertext[TEST_CT_LENGTH] = {0};
-    clock_t t_start, t_end;
+    thrd_t *thread_ids;
+    thread_param *thread_params;
+    clock_t t_start, t_end; /* CPU time */
+    struct timeval wt_start, wt_end; /* wall time */
+    char threads_str[32]; /* example: 1 thread, 32 threads */
 
-    new_key_search_ctx(
-            &ctx,
-            test_ciphertext,
-            TEST_CT_LENGTH,
-            0u
-    );
-    printf("Benchmarking...\n");
+    snprintf(threads_str, sizeof(threads_str),
+             "%d thread%s", threads, (threads > 1) ? "s" : "");
+    void *buf = malloc(TEST_CT_LENGTH);
+    if (!buf) {
+        perror("malloc");
+        exit(1);
+    }
+    memset(buf, 1, TEST_CT_LENGTH);
+    ciphertext = buf;
+    ciphertext_len = TEST_CT_LENGTH;
 
+    printf("Benchmarking... (%s)\n", threads_str);
+    if ((thread_ids = malloc(sizeof(thrd_t) * threads)) == NULL) {
+        perror("malloc");
+        exit(1);
+    }
+    if ((thread_params = malloc(sizeof(thread_param) * threads)) == NULL) {
+        perror("malloc");
+        exit(1);
+    }
 
+    /* assign search ranges to workers */
+    uint32_t range_size = KEYSPACE_SIZE / threads;
+    for (int i = 0; i < threads; ++i) {
+        thread_params[i].a = range_size * i;
+        thread_params[i].b = range_size * i + range_size;
+        thread_params[i].worker_id = i;
+    }
+    /* the last search range should warp */
+    thread_params[threads - 1].b = KEYSPACE_SIZE;
+
+    gettimeofday(&wt_start, NULL);
     t_start = clock();
-    while (yield_possible_key(&ctx, end, &found)) {
+    /* start workers */
+    for (int i = 0; i < threads; ++i) {
+        if (thrd_create(
+                &thread_ids[i],
+                (thrd_start_t) thread_worker,
+                &thread_params[i]) != thrd_success) {
+            fprintf(stderr, "Cannot start thread %d.\n", i);
+            exit(1);
+        }
+    }
+
+    /* wait for all workers to terminate */
+    for (int i = 0; i < threads; ++i) {
+        int ret;
+        thrd_join(thread_ids[i], &ret);
+        if (ret) {
+            fprintf(stderr, "Worker terminated with error code %d.\n", ret);
+        }
     }
     t_end = clock();
+    gettimeofday(&wt_end, NULL);
 
-    const double key_per_sec =
-            1.0 * end / ((double) (t_end - t_start) / CLOCKS_PER_SEC);
+    const double cpu_secs = (double) (t_end - t_start) / CLOCKS_PER_SEC;
+    const double secs =
+            (double)(wt_end.tv_sec - wt_start.tv_sec) + \
+            ((double)wt_end.tv_usec - (double)wt_start.tv_usec) / 1e6;
+    const double key_per_sec = KEYSPACE_SIZE / secs;
+    const double speedup = cpu_secs / secs;
     printf(
-            "Finish.\n"
-            "Speed (single thread): %.3f key/sec\n",
-            key_per_sec
+            "Finished.\n"
+            "Threads: %d\n"
+            "Time used: %.3f sec\n"
+            "CPU time used: %.3f sec\n"
+            "Speed: %.3f key/sec\n"
+            "Speed: %.3f key/cpu-sec (single thread)\n"
+            "Speedup: %.3fx (%.3f%%)\n",
+            threads,
+            secs,
+            cpu_secs,
+            key_per_sec,
+            KEYSPACE_SIZE / cpu_secs,
+            speedup,
+            speedup / threads * 100
     );
 
-    printf("Time to search the whole key space:\n");
-
-    const int threads[] = {1, 2, 4, 8, 16, 32, 0};
-    for (int i = 0; threads[i] > 0; ++i) {
-        printf("  %3.d thread: %9.3f sec%s\n",
-               threads[i], (double) KEYSPACE_SIZE / key_per_sec / threads[i],
-               (threads[i] != 1) ? " (estimate)" : "");
-    }
+    printf("Time to search the whole key space: "
+           "%.3f sec (%.3f cpu-sec, single thread)\n", secs, cpu_secs);
 }
 
 void print_help(const char *program_name) {
@@ -311,7 +363,8 @@ void print_help(const char *program_name) {
             "[--benchmark]\n"
             "    -o --output <file>\tsave the decrypted photo into a file\n"
             "    -j --jobs <threads>\thow many threads to use (default: 1)\n"
-            "    -b --benchmark\trun a benchmark to measure the speed\n"
+            "    -b --benchmark\t"
+            "search the whole key space and measure the speed\n"
             "    -h --help\t\tprint this help menu and exit\n",
             program_name
     );
@@ -389,7 +442,7 @@ int main(int argc, char *argv[]) {
 
     /* run benchmark and exit */
     if (benchmark) {
-        run_benchmark();
+        run_benchmark(threads);
         return 0;
     }
 
